@@ -1,11 +1,7 @@
 package models
 
-import (
-	"gorm.io/gorm"
-)
-
 type Photo struct {
-	gorm.Model
+	ID		  uint      `gorm:"primaryKey"`
 	Title     string    `gorm:"not null"`
 	Caption   string
 	PhotoURL  string    `gorm:"not null"`

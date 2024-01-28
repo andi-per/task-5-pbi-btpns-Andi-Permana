@@ -120,30 +120,6 @@ func Login(c *gin.Context)  {
 	c.JSON(http.StatusOK, gin.H{"message": "Login successful", "token": token})
 }
 
-
-// // dummy controller
-func GetUser(c *gin.Context)  {
-	var users []models.User
-	initializers.DB.Find(&users)
-
-	c.JSON(201, gin.H{
-		"users": users,
-	})
-}
-
-// // dummy controller
-// func GetSingleUser(c *gin.Context)  {
-// 	// GET query params id
-// 	id := c.Param("id")
-
-// 	var user models.User
-// 	initializers.DB.Find(&user, id)
-
-// 	c.JSON(201, gin.H{
-// 		"user": user,
-// 	})
-// }
-
 func UpdateUser(c *gin.Context)  {
 	userID, err := strconv.Atoi(c.Param("userId"))
 	if err != nil {
@@ -180,12 +156,25 @@ func UpdateUser(c *gin.Context)  {
 		user.Username = newUsername
 	} else {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Username is required"})
+		return
+	}
+
+	// Retrieve user ID from the context
+	tokenUserID, exists := c.Get("userID")
+	if !exists {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "User ID not available"})
+		return
+	}
+
+	if userID != int(tokenUserID.(float64)) {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Unauthorized action", "reason":"User try update other user's username"})
+		return
 	}
 
 	// Update the user in the database
 	initializers.DB.Save(&user)
 
-	c.JSON(http.StatusOK, gin.H{"message": "User updated successfully", "user": user})
+	c.JSON(http.StatusOK, gin.H{"message": "User updated successfully", "username": newUsername})
 }
 
 func DeleteUser(c *gin.Context) {
@@ -210,8 +199,28 @@ func DeleteUser(c *gin.Context) {
 		return
 	}
 
+	// Retrieve user ID from the context
+	tokenUserID, exists := c.Get("userID")
+	if !exists {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "User ID not available"})
+		return
+	}
+
+	if userID != int(tokenUserID.(float64)) {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Unauthorized action", "reason":"User try to delete other user"})
+		return
+	}
+
 	// Delete the user from the database
 	initializers.DB.Delete(&user)
+
+	// Delete all photos associated with the user
+	result = initializers.DB.Where("user_id = ?", tokenUserID).Delete(&models.Photo{})
+	if result.Error != nil {
+		// Handle case where photos deletion fails
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete photos"})
+		return
+	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "User deleted successfully"})
 }
