@@ -1,42 +1,77 @@
 package controllers
 
 import (
+	"api/rakamin-api/helpers"
 	"api/rakamin-api/initializers"
 	"api/rakamin-api/models"
 	"errors"
 	"net/http"
 	"strconv"
 
+	"github.com/asaskevich/govalidator"
 	"github.com/gin-gonic/gin"
+	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
 )
+
+func init() {
+	govalidator.SetFieldsRequiredByDefault(true)
+}
 
 func Register(c *gin.Context)  {
 	// Get data of req body
 	var body struct {
-		Username string
-		Email	 string
-		Password string
+		Username string `valid:"type(string)"`
+		Email	 string `valid:"email"`
+		Password string `valid:"type(string)"`
 	}
 
 	c.Bind(&body)
 
-	// Create new user
-	user := models.User{Username: body.Username, Email: body.Email, Password: body.Password}
-
-	result := initializers.DB.Create(&user)
-
-	if result.Error != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-		"error" : "Bad request",
-		})
+	if body.Username == "" || body.Email == "" || body.Password == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "All fields are required"})
 		return
 	}
 
-	// return user id
-	c.JSON(http.StatusCreated, gin.H{
-		"user": user,
-	})
+	// Validate the Email
+	isEmail  := govalidator.IsEmail(body.Email)
+	if !isEmail {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Email is invalid"})
+		return
+	}
+
+	// Validate the Password length
+	if len(body.Password) < 6 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Password should contain minimum 6 character"})
+		return
+	}
+
+
+	// Hash the password using bcrypt
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(body.Password), bcrypt.DefaultCost)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to hash the password"})
+		return
+	}
+
+	// Create the user in the database
+	user := models.User{Username: body.Username, Email: body.Email, Password: string(hashedPassword)}
+
+	result := initializers.DB.Create(&user)
+	if result.Error != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create user", "reason": result.Error.Error()})
+		return
+	}
+
+	// Generate JWT token
+	token, err := helpers.GenerateJWT(user.ID, user.Email)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate JWT"})
+		return
+	}
+
+	// send the token back in the response
+	c.JSON(http.StatusOK, gin.H{"message": "User signed up successfully", "token": token})
 }
 
 func Login(c *gin.Context)  {
@@ -47,22 +82,42 @@ func Login(c *gin.Context)  {
 	}
 
 	c.Bind(&body)
+
+	if body.Email == "" || body.Password == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "All fields are required"})
+		return
+	}
 	
-	// user := models.User{Username: body.Username, Email: body.Email, Password: body.Password}
+	// Validate the Email
+	isEmail  := govalidator.IsEmail(body.Email)
+	if !isEmail {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Email is invalid"})
+		return
+	}
 
-	// result := initializers.DB.Create(&user) // pass pointer of data to Create
+	// Check if the user exists by email
+	var user models.User
+	result := initializers.DB.Where("email = ?", body.Email).First(&user)
+	if result.Error != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid email or password"})
+		return
+	}
 
-	// if result.Error != nil {
-	// 	c.JSON(400, gin.H{
-	// 	"error" : "Bad request",
-	// 	})
-	// 	return
-	// }
+	// Compare the provided password with the hashed password
+	err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(body.Password))
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid email or password"})
+		return
+	}
 
-	// return user id
-	c.JSON(http.StatusOK, gin.H{
-		"message": "Login success",
-	})
+	// Passwords match, generate JWT token
+	token, err := helpers.GenerateJWT(user.ID, user.Email)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate JWT"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Login successful", "token": token})
 }
 
 
